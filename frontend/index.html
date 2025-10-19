@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>语音转写 → 总结 → 思维导图</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- 本地 Markmap 依赖（顺序：d3 -> lib -> view），部署时由 FastAPI 静态托管 -->
+  <script src="/static/vendor/d3.min.js"></script>
+  <script src="/static/vendor/markmap-lib.iife.js"></script>
+  <script src="/static/vendor/markmap-view.iife.js"></script>
+
+  <style>
+    body { background:#0b1220; color:#e5e7eb; }
+    .card { background:#111827; border:1px solid #374151; border-radius:1rem; }
+    .btn { padding:.5rem .75rem; border-radius:.5rem; border:1px solid #475569; }
+    .seg { display:flex; gap:.5rem; flex-wrap:wrap; }
+    .seg .seg-btn{ padding:.4rem .8rem; border:1px solid #475569; border-radius:.5rem; background:#0f172a; color:#e5e7eb; cursor:pointer; }
+    .seg .seg-btn.active { background:#1d4ed8; border-color:#93c5fd; color:white; }
+    textarea { background:#0f172a; border:1px solid #334155; }
+    #outline-fallback ul { list-style: disc; margin-left: 1.25rem; }
+    #outline-fallback li { margin: .15rem 0; }
+  </style>
+</head>
+<body class="p-6">
+  <div class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+    <!-- 左：识别与控制 -->
+    <div class="card p-4 space-y-5">
+      <h1 class="text-xl font-semibold">① 语音识别</h1>
+
+      <div class="space-y-2">
+        <div class="text-sm opacity-80">识别模式</div>
+        <div id="modeGroup" class="seg">
+          <button class="seg-btn" data-value="webspeech">实时（浏览器内置）</button>
+          <button class="seg-btn active" data-value="whisper">离线精度（Whisper：仅标签页音频）</button>
+          <button class="seg-btn" data-value="whisper_mic">仅麦克风（Whisper）</button>
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <div class="text-sm opacity-80">延迟档位（Whisper 分片）</div>
+        <div id="latencyGroup" class="seg">
+          <button class="seg-btn" data-value="2500">均衡（2.5s）</button>
+          <button class="seg-btn active" data-value="5000">稳定（5s）</button>
+          <button class="seg-btn" data-value="8000">更稳（8s）</button>
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <div class="text-sm opacity-80">识别语言</div>
+        <div id="recLangGroup" class="seg">
+          <button class="seg-btn active" data-value="zh">中文</button>
+          <button class="seg-btn" data-value="en">English</button>
+          <button class="seg-btn" data-value="ja">日本語</button>
+          <button class="seg-btn" data-value="auto">自动</button>
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <div class="text-sm opacity-80">编码方式</div>
+        <div id="encGroup" class="seg">
+          <button class="seg-btn" data-value="container">默认（WebM/OGG）</button>
+          <button class="seg-btn active" data-value="wav">兼容（WAV 直传）</button>
+        </div>
+      </div>
+
+      <div class="flex gap-3">
+        <button id="btnStart" class="btn">开始</button>
+        <button id="btnStop" class="btn">停止</button>
+      </div>
+
+      <div class="text-sm opacity-80">
+        提示：抓<strong>标签页音频</strong>请选择“离线精度（Whisper：仅标签页音频）”，开始后在弹窗中选择目标标签并勾选“共享音频”。如需麦克风，请用“仅麦克风（Whisper）”。
+      </div>
+
+      <div class="space-y-2">
+        <h2 class="font-medium">实时转写（含调试信息）</h2>
+        <div id="transcript" class="min-h-[220px] p-3 bg-slate-900 rounded border border-slate-700 overflow-y-auto text-sm"></div>
+      </div>
+    </div>
+
+    <!-- 右：总结与思维导图 -->
+    <div class="card p-4 space-y-5">
+      <h1 class="text-xl font-semibold">② DeepSeek 总结 → 思维导图</h1>
+
+      <div class="space-y-2">
+        <div class="text-sm opacity-80">纪要输出语言</div>
+        <div id="outLangGroup" class="seg">
+          <button class="seg-btn active" data-value="zh">中文</button>
+          <button class="seg-btn" data-value="en">English</button>
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <div class="text-sm opacity-80">DeepSeek 模型</div>
+        <div id="modelGroup" class="seg">
+          <button class="seg-btn active" data-value="deepseek-chat">chat</button>
+          <button class="seg-btn" data-value="deepseek-reasoner">reasoner</button>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap gap-3 items-center">
+        <button id="btnSumm" class="btn">生成总结 + 提纲</button>
+        <button id="btnCheckDS" class="btn">检查 DeepSeek</button>
+      </div>
+
+      <div class="space-y-2">
+        <h2 class="font-medium">会议纪要</h2>
+        <textarea id="summary" class="w-full h-44 p-3 rounded" placeholder="点击上面的按钮生成..."></textarea>
+      </div>
+
+      <div class="space-y-2">
+        <h2 class="font-medium">思维导图</h2>
+        <div class="text-sm opacity-80">若本地 Markmap 未加载，将自动显示层级列表兜底。</div>
+        <div id="mindmap-wrap" class="h-80 bg-slate-900 rounded border border-slate-700 relative">
+          <svg id="mindmap" class="w-full h-full"></svg>
+          <div id="outline-fallback" class="hidden p-3 text-sm leading-6 absolute inset-0 overflow-auto"></div>
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <h2 class="font-medium">下载</h2>
+        <div class="flex flex-wrap gap-3 items-center">
+          <button id="btnDlTranscript" class="btn">下载转写 .txt</button>
+          <button id="btnDlSummary" class="btn">下载纪要 .md</button>
+          <button id="btnDlSVG" class="btn">下载导图 .svg</button>
+          <button id="btnDlPNG" class="btn">下载导图 .png</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+  // 一体化部署：同源
+  const API_BASE = '';
+
+  const state = { mode:'whisper', chunkMs:5000, recLang:'zh', outLang:'zh', model:'deepseek-chat', enc:'wav' };
+
+  function bindSegmented(id,key){
+    const group=document.getElementById(id);
+    group.addEventListener('click',(e)=>{
+      const btn=e.target.closest('.seg-btn'); if(!btn) return;
+      [...group.querySelectorAll('.seg-btn')].forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      const v=btn.getAttribute('data-value');
+      state[key]=(key==='chunkMs')?Number(v):v;
+      debug(`切换：${key}=${state[key]}`);
+    });
+  }
+  bindSegmented('modeGroup','mode');
+  bindSegmented('latencyGroup','chunkMs');
+  bindSegmented('recLangGroup','recLang');
+  bindSegmented('outLangGroup','outLang');
+  bindSegmented('modelGroup','model');
+  bindSegmented('encGroup','enc');
+
+  const els={ transcript:document.getElementById('transcript'), summary:document.getElementById('summary') };
+  function debug(msg){ console.log('[DEBUG]',msg); const el=els.transcript; const at=el.scrollTop+el.clientHeight>=el.scrollHeight-10; el.innerText+=`[DEBUG] ${msg}\n`; if(at) el.scrollTop=el.scrollHeight; }
+  function appendText(t){ const el=els.transcript; const at=el.scrollTop+el.clientHeight>=el.scrollHeight-10; el.innerText+=(t?.endsWith?.('\n')?t:t+' '); if(at) el.scrollTop=el.scrollHeight; }
+
+  window.addEventListener('load', async ()=>{
+    debug(`页面地址：${location.href}`);
+    try{ const r=await fetch(`/health`,{cache:'no-store'}); debug(`后端 /health：HTTP ${r.status}`);}catch(e){ debug(`❌ 无法连接后端：${e}`); }
+    renderMindmap('# 准备就绪\n- 点击“生成总结 + 提纲”渲染导图');
+  });
+
+  function mdToList(md){ const root=document.createElement('ul'); const lines=(md||'').split('\n'); const stack=[{level:0,el:root}];
+    const push=(lv)=>{while(stack.length-1>lv)stack.pop();while(stack.length-1<lv){const ul=document.createElement('ul');stack[stack.length-1].el.appendChild(ul);stack.push({level:stack.length,el:ul});}};
+    for(const line of lines){ if(!line.trim())continue; let m=line.match(/^(#+)\s+(.*)$/); if(m){const lv=Math.min(m[1].length,6);push(lv);const li=document.createElement('li');li.textContent=m[2].trim();stack[lv].el.appendChild(li);continue;}
+      m=line.match(/^(\s*)[-*+]\s+(.*)$/); if(m){const ind=Math.floor((m[1]||'').length/2)+1;push(ind);const li=document.createElement('li');li.textContent=m[2].trim();stack[ind].el.appendChild(li);}}
+    return root;}
+  function renderOutlineFallback(md){ const svg=document.getElementById('mindmap'); const box=document.getElementById('outline-fallback'); if(svg)svg.style.display='none'; if(box){box.classList.remove('hidden'); box.innerHTML=''; box.appendChild(mdToList(md));}}
+  function normalizeOutline(md){ const m=md?.match(/^\s*```[\w-]*\s*([\s\S]*?)\s*```/m); return (m?m[1]:md||'# 空').trim()||'# 空';}
+
+  let mm=null;
+  async function renderMindmap(md){
+    const input = normalizeOutline(md);
+    if (!window.markmap) { debug('window.markmap 未就绪，使用列表兜底'); return renderOutlineFallback(input); }
+    try{
+      const { Markmap, Transformer, loadCSS, loadJS } = window.markmap;
+      const transformer = new Transformer(); const { root } = transformer.transform(input);
+      const assets = transformer.getAssets ? transformer.getAssets() : { styles: [], scripts: [] };
+      await loadCSS?.(assets.styles || []); await loadJS?.(assets.scripts || []);
+      const box = document.getElementById('outline-fallback'); if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+      const svg = document.getElementById('mindmap'); if (svg) svg.style.display = 'block';
+      if(!mm){ mm=Markmap.create(svg, undefined, root); } else { mm.setData(root); mm.fit(); }
+    }catch(err){ debug('Markmap 渲染失败：'+(err?.message||err)); renderOutlineFallback(input); }
+  }
+
+  let recog=null;
+  function startWebSpeech(){ const SR=window.webkitSpeechRecognition||window.SpeechRecognition; if(!SR){ alert('浏览器不支持 Web Speech'); return; }
+    const m={ zh:'zh-CN', en:'en-US', ja:'ja-JP' }; recog=new SR(); recog.lang=m[state.recLang]||'zh-CN'; recog.interimResults=true; recog.continuous=true;
+    recog.onresult=(e)=>{ for(let i=e.resultIndex;i<e.results.length;i++){ const tr=e.results[i][0].transcript; if(e.results[i].isFinal) appendText(tr+'\n'); } };
+    try{ recog.start(); debug('✅ WebSpeech 已启动'); }catch(err){ alert('启动失败：'+(err.message||err)); } }
+  function stopWebSpeech(){ if(recog){ try{ recog.stop(); }catch{} recog=null; debug('已停止 WebSpeech'); } }
+
+  let media={ rec:null, dest:null, ctx:null, streams:[], proc:null, pcmBufs:[], lastFlush:0, sr:48000 };
+  function stopAllStreams(){ media.streams.forEach(s=>s.getTracks().forEach(t=>t.stop())); media.streams=[]; }
+
+  function encodeWavMono(samples, sampleRate, gain=1.6){
+    const out = new Float32Array(samples.length);
+    for(let i=0;i<samples.length;i++){
+      let s = samples[i] * gain;
+      if (s > 1) s = 1;
+      if (s < -1) s = -1;
+      out[i] = s;
+    }
+    const buf = new ArrayBuffer(44 + out.length*2);
+    const view = new DataView(buf);
+    const w=(o,v,fn)=>view[fn](o,v,true);
+    const ws=(o,s)=>{ for(let i=0;i<s.length;i++) view.setUint8(o+i,s.charCodeAt(i)); };
+    ws(0,'RIFF'); w(4,36+out.length*2,'setUint32'); ws(8,'WAVE'); ws(12,'fmt '); w(16,16,'setUint32');
+    w(20,1,'setUint16'); w(22,1,'setUint16'); w(24,sampleRate,'setUint32'); w(28,sampleRate*2,'setUint32');
+    w(32,2,'setUint16'); w(34,16,'setUint16'); ws(36,'data'); w(40,out.length*2,'setUint32');
+    let off=44; for(let i=0;i<out.length;i++){ const s=out[i]; view.setInt16(off, s<0?s*0x8000:s*0x7FFF, true); off+=2; }
+    return new Blob([view], {type:'audio/wav'});
+  }
+
+  async function startWhisper_wav(tabAudioOnly=false){
+    debug(`准备启动 Whisper（WAV 兼容，tabAudioOnly=${tabAudioOnly}）`);
+    const streams=[]; let desktop=null, mic=null;
+    if(tabAudioOnly){ const p=await navigator.mediaDevices.getDisplayMedia({ audio:true, video:true }); p.getVideoTracks().forEach(t=>t.stop()); desktop=p; streams.push(desktop); }
+    else { mic = await navigator.mediaDevices.getUserMedia({ audio:true }); streams.push(mic); }
+
+    const ctx=new AudioContext(); await ctx.resume();
+    const mix=ctx.createGain(); mix.gain.value=1.0;
+    if(desktop){ ctx.createMediaStreamSource(desktop).connect(mix); }
+    if(mic){ ctx.createMediaStreamSource(mic).connect(mix); }
+
+    const proc=ctx.createScriptProcessor(4096, 2, 1);
+    const pcmBufs=[]; let lastFlush=performance.now();
+
+    function meter(samples){
+      let sum=0, peak=0;
+      for(let i=0;i<samples.length;i++){ const v=Math.abs(samples[i]); sum+=v*v; if(v>peak) peak=v; }
+      const rms=Math.sqrt(sum/Math.max(1,samples.length)); const db=20*Math.log10(rms||1e-9);
+      return { db: Math.round(db*10)/10, peak: Math.round(peak*100)/100 };
+    }
+
+    proc.onaudioprocess = async (e)=>{
+      const ch0=e.inputBuffer.getChannelData(0);
+      const ch1=e.inputBuffer.numberOfChannels>1?e.inputBuffer.getChannelData(1):null;
+      const len=ch0.length; const mono=new Float32Array(len);
+      if(ch1){ for(let i=0;i<len;i++) mono[i]=(ch0[i]+ch1[i])/2; } else { mono.set(ch0); }
+      pcmBufs.push(mono);
+
+      const now=performance.now();
+      if(now-lastFlush>=state.chunkMs){
+        let total=0; for(const b of pcmBufs) total+=b.length;
+        const all=new Float32Array(total); let off=0; for(const b of pcmBufs){ all.set(b,off); off+=b.length; }
+        pcmBufs.length=0; lastFlush=now;
+
+        const m=meter(all);
+        debug(`WAV分片 能量≈ ${m.db} dBFS, 峰值≈ ${m.peak}`);
+
+        const wav=encodeWavMono(all, ctx.sampleRate, 1.6);
+        const fd=new FormData();
+        fd.append('file', wav, 'chunk.wav');
+        fd.append('lang', state.recLang==='auto'?'':state.recLang);
+        fd.append('mime','audio/wav');
+        try{
+          const r=await fetch(`/asr/chunk`,{ method:'POST', body: fd });
+          const j=await r.json();
+          if(j.text){ appendText(j.text+'\n'); }
+          else{ debug('后端返回无 text：'+JSON.stringify(j)); }
+        }catch(err){ debug('❌ /asr/chunk 请求失败：'+err); }
+      }
+    };
+
+    const nullGain=ctx.createGain(); nullGain.gain.value=0;
+    mix.connect(proc); proc.connect(nullGain); nullGain.connect(ctx.destination);
+
+    debug(`✅ WAV 采集开始（分片=${state.chunkMs}ms，sr=${ctx.sampleRate}，直传WAV）`);
+    media={ rec:null, dest:null, ctx, streams, proc, pcmBufs, lastFlush:performance.now(), sr:ctx.sampleRate };
+  }
+
+  function stopWhisper(){
+    if(media.rec){ try{ media.rec.stop(); }catch{} }
+    if(media.proc){ try{ media.proc.disconnect(); }catch{} }
+    if(media.ctx){ try{ media.ctx.close(); }catch{} }
+    stopAllStreams();
+    debug('已停止 Whisper');
+  }
+
+  async function doSummarize(){
+    const transcript=els.transcript.innerText.trim();
+    if(!transcript){ alert('还没有转写文本'); return; }
+    const body={ transcript, out_lang: state.outLang, model: state.model };
+    let r, j, rawText='';
+    try{ r=await fetch(`/summarize`,{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }); }
+    catch(e){ debug('❌ summarize 网络失败：'+e); alert('网络或跨域错误：'+(e?.message||e)); return; }
+    try{ rawText=await r.clone().text(); }catch{}
+    try{ j=JSON.parse(rawText); }catch{ j=null; }
+    debug(`summarize 响应：HTTP ${r.status} ${r.ok?'OK':'FAIL'} ${rawText?.slice(0,200)||'(空响应)'}`);
+    if(!r.ok){ const msg=(j&&(j.detail||j.error||j.message))||`HTTP ${r.status}`; alert('summarize 失败：'+msg); return; }
+    els.summary.value = j?.summary || '';
+    try{ await renderMindmap(j?.outline_md || '# 无提纲\n- 请检查提示词'); }catch(e){}
+  }
+  async function checkDeepSeek(){ try{ const r=await fetch(`/diagnose/deepseek`); const j=await r.json(); debug(`DeepSeek 诊断：ok=${j.ok}, status=${j.status_code}, content=${j.content||''}`); alert(j.ok?'DeepSeek 连通：OK':`DeepSeek 失败：status=${j.status_code||j.reason}`);}catch(e){ alert('DeepSeek 诊断异常：'+(e.message||e)); } }
+
+  function downloadText(filename, text){ const blob=new Blob([text],{type:'text/plain;charset=utf-8'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
+  function downloadSVG(filename){ const svg=document.getElementById('mindmap'); if(!svg||svg.style.display==='none'){ alert('当前没有可导出的思维导图 SVG'); return; } svg.setAttribute('xmlns','http://www.w3.org/2000/svg'); const data=new XMLSerializer().serializeToString(svg); const blob=new Blob([data],{type:'image/svg+xml;charset=utf-8'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
+  function downloadPNG(filename, scale=2){ const svg=document.getElementById('mindmap'); if(!svg||svg.style.display==='none'){ alert('当前没有可导出的思维导图 PNG'); return; } svg.setAttribute('xmlns','http://www.w3.org/2000/svg'); const data=new XMLSerializer().serializeToString(svg); const blob=new Blob([data],{type:'image/svg+xml;charset=utf-8'}); const url=URL.createObjectURL(blob); const img=new Image(); const bbox=svg.getBoundingClientRect(); const w=Math.max(1,Math.floor(bbox.width)); const h=Math.max(1,Math.floor(bbox.height)); img.onload=()=>{ const canvas=document.createElement('canvas'); canvas.width=Math.max(1,Math.floor(w*scale)); canvas.height=Math.max(1,Math.floor(h*scale)); const ctx=canvas.getContext('2d'); ctx.setTransform(scale,0,0,scale,0,0); ctx.drawImage(img,0,0,w,h); canvas.toBlob((b)=>{ const u=URL.createObjectURL(b); const a=document.createElement('a'); a.href=u; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u); URL.revokeObjectURL(url); },'image/png'); }; img.onerror=()=>{ URL.revokeObjectURL(url); alert('SVG 转 PNG 失败'); }; img.src=url; }
+
+  document.getElementById('btnStart').onclick=()=>{
+    debug(`点击开始：mode=${state.mode}, enc=${state.enc}`);
+    if(state.mode==='webspeech'){ startWebSpeech(); return; }
+    const tabOnly = (state.mode==='whisper'); // whisper=仅标签页音频；whisper_mic=仅麦克风
+    // 统一用 WAV 直传，最稳
+    startWhisper_wav(tabOnly);
+  };
+  document.getElementById('btnStop').onclick=()=>{
+    if(state.mode==='webspeech') stopWebSpeech(); else stopWhisper();
+  };
+  document.getElementById('btnSumm').onclick=()=>doSummarize();
+  document.getElementById('btnCheckDS').onclick=()=>checkDeepSeek();
+  document.getElementById('btnDlTranscript').onclick=()=>{ const t=els.transcript.innerText.trim(); if(!t){ alert('没有可下载的转写文本'); return; } downloadText('transcript.txt', t+'\n'); };
+  document.getElementById('btnDlSummary').onclick=()=>{ const s=(els.summary.value||'').trim(); if(!s){ alert('没有可下载的会议纪要'); return; } downloadText('summary.md', s+'\n'); };
+  document.getElementById('btnDlSVG').onclick=()=>downloadSVG('mindmap.svg');
+  document.getElementById('btnDlPNG').onclick=()=>downloadPNG('mindmap.png', 2);
+</script>
+</body>
+</html>
