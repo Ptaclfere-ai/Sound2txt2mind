@@ -1,0 +1,9 @@
+.vscode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git
+.gitignore
+backend/.env
+frontend/node_modules
